@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 from requests.exceptions import RequestException
 from craigslist import CraigslistHousing
 from io import StringIO
+from math import sin, cos, sqrt, atan2, radians
 
 # Bedrooms and square feet
 def extra_features(site, area, category, sort_by, limit):
@@ -124,6 +125,29 @@ def main_features(site, area, category, sort_by, limit, geotagged):
     df = pd.DataFrame(df)
     return(df)
 
+# Calculate distance from city center
+def calc_distance_from_city_center(data):
+    R = 3958.8
+
+    lat1 = data['latitude'].apply(radians)
+    lon1 = data['longitude'].apply(radians)
+    lat2 = radians(41.882054)
+    lon2 = radians(-87.627813)
+
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+
+    distance = []
+
+    for dist in range(int(len(dlon))):
+        a = sin(dlat[dist] / 2)**2 + cos(lat1[dist]) * cos(lat2) * sin(dlon[dist] / 2)**2
+        c = 2 * atan2(sqrt(a), sqrt(1 - a))
+        distance.append(R * c)
+    
+    data['distance_from_city_center'] = distance
+    
+    return(data)
+
 ####################################################
 ######### This is how I created the table ##########
 ####################################################
@@ -140,7 +164,8 @@ def main_features(site, area, category, sort_by, limit, geotagged):
 #                 latitude                float,
 #                 longitude               float,
 #                 bedrooms                float,
-#                 square_feet             float)""")
+#                 square_feet             float,
+#                 distance_from_city_center float))""")
 # sio = StringIO() # string buffer
 # sio.write(data.to_csv(index=None, header=None))  # Write the Pandas DataFrame as a csv to the buffer
 # sio.seek(0)  # reset the position
@@ -173,9 +198,9 @@ def update_listings_table(data, host_, port_, user_, password_, dbname_):
     # Insert each row
     for row in range(len(data)):
         try:
-            query = """ INSERT into listings (id, repost_of, name, url, datetime, last_updated, 
-                                price, where_, has_image, latitude, longitude, bedrooms, square_feet)
-                        SELECT %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            query = """ INSERT into listings (id, repost_of, name, url, datetime, last_updated, price, where_,
+                                has_image, latitude, longitude, bedrooms, square_feet, distance_from_city_center)
+                        SELECT %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                         WHERE NOT EXISTS (SELECT id 
                                           FROM listings 
                                            WHERE id = %s)
@@ -192,7 +217,8 @@ def update_listings_table(data, host_, port_, user_, password_, dbname_):
                      data['latitude'].iloc[row],
                      data['longitude'].iloc[row],
                      data['bedrooms'].iloc[row],
-                     data['square_feet'].iloc[row],                     
+                     data['square_feet'].iloc[row],
+                     data['distance_from_city_center'].iloc[row],                   
                      data['id'].iloc[row]]                               
                         
             cursor = connection.cursor()
@@ -246,6 +272,9 @@ def main():
 
     # Merge tables
     all_features = pd.merge(main_feats, extra_feats, left_on='id', right_on='id')
+
+    # Add Distance from city center
+    all_features = calc_distance_from_city_center(all_features)
     
     # Update postgres table
     update_listings_table(data = all_features, host_= remote_host, port_ = port, 
@@ -254,7 +283,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
-
-
