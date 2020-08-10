@@ -5,6 +5,7 @@ import psycopg2
 import argparse
 import sys
 import requests
+import geopy
 from bs4 import BeautifulSoup
 from requests.exceptions import RequestException
 from craigslist import CraigslistHousing
@@ -148,11 +149,30 @@ def calc_distance_from_city_center(data):
     
     return(data)
 
+# Calculate price per square feet
+def price_per_sqft(df):
+    df['price_per_sqft'] = pd.to_numeric(df['price']) / pd.to_numeric(df['square_feet'])
+    return(df)
+
+# Get zipcodes using geopy
+def get_zipcode(df, geolocator, lat_field, lon_field):
+    try:
+        location = geolocator.reverse((df[lat_field], df[lon_field]))
+        if 'postcode' in location.raw['address'].keys():
+            zip = location.raw['address']['postcode']
+            zip = zip[:5]
+            zip = int(zip)
+            return zip
+        else:
+            return None
+    except:
+        return None
+
 ####################################################
 ######### This is how I created the table ##########
 ####################################################
 # cursor.execute("""CREATE TABLE listings(
-#                 id                      SERIAL PRIMARY KEY,
+#                 id                      bigint,
 #                 repost_of               bigint,
 #                 name                    text,
 #                 url                     text,
@@ -165,7 +185,9 @@ def calc_distance_from_city_center(data):
 #                 longitude               float,
 #                 bedrooms                float,
 #                 square_feet             float,
-#                 distance_from_city_center float))""")
+#                 distance_from_city_center float,
+#                 price_per_sqft          float,
+#                 zip                     integer)""")
 # sio = StringIO() # string buffer
 # sio.write(data.to_csv(index=None, header=None))  # Write the Pandas DataFrame as a csv to the buffer
 # sio.seek(0)  # reset the position
@@ -199,8 +221,9 @@ def update_listings_table(data, host_, port_, user_, password_, dbname_):
     for row in range(len(data)):
         try:
             query = """ INSERT into listings (id, repost_of, name, url, datetime, last_updated, price, where_,
-                                has_image, latitude, longitude, bedrooms, square_feet, distance_from_city_center)
-                        SELECT %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                                has_image, latitude, longitude, bedrooms, square_feet, distance_from_city_center,
+                                price_per_sqft, zip)
+                        SELECT %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                         WHERE NOT EXISTS (SELECT id 
                                           FROM listings 
                                            WHERE id = %s)
@@ -218,7 +241,9 @@ def update_listings_table(data, host_, port_, user_, password_, dbname_):
                      data['longitude'].iloc[row],
                      data['bedrooms'].iloc[row],
                      data['square_feet'].iloc[row],
-                     data['distance_from_city_center'].iloc[row],                   
+                     data['distance_from_city_center'].iloc[row],
+                     data['price_per_sqft'].iloc[row],
+                     data['zip'].iloc[row],               
                      data['id'].iloc[row]]                               
                         
             cursor = connection.cursor()
@@ -265,21 +290,40 @@ def main():
     dbname = args.dbname
 
     # Get bedrooms and square feet
+    print('Scraping extra features.......')
     extra_feats = extra_features(site, area, category, sort_by, limit)
+    print('Complete.')
 
     # Get normal features
+    print('Scraping normal features.......')
     main_feats = main_features(site, area, category, sort_by, limit, geotagged)
+    print('Complete.')
 
     # Merge tables
+    print('Formatting.......')
     all_features = pd.merge(main_feats, extra_feats, left_on='id', right_on='id')
 
     # Add Distance from city center
     all_features = calc_distance_from_city_center(all_features)
+
+    # Add price per square feet
+    all_features = price_per_sqft(all_features)
+    print('Complete.')
+
+    # Add zip codes
+    print('Getting zip codes.......')
+    geolocator = geopy.Nominatim(user_agent='zip_codes')
+
+    all_features['zip'] = all_features.apply(get_zipcode, 
+                                             axis=1, 
+                                             geolocator=geolocator, 
+                                             lat_field='latitude', 
+                                             lon_field='longitude')
+    print('Complete.')
     
     # Update postgres table
     update_listings_table(data = all_features, host_= remote_host, port_ = port, 
     user_ = user, password_ = password, dbname_ = dbname)
-
 
 if __name__ == '__main__':
     main()
