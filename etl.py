@@ -124,6 +124,7 @@ def main_features(site, area, category, sort_by, limit, geotagged):
             df['longitude'].append(result['geotag'][1])
 
     df = pd.DataFrame(df)
+    df['price'] = pd.to_numeric(df['price'].str.replace(',', ''))
     return(df)
 
 # Calculate distance from city center
@@ -151,7 +152,9 @@ def calc_distance_from_city_center(data):
 
 # Calculate price per square feet
 def price_per_sqft(df):
-    df['price_per_sqft'] = pd.to_numeric(df['price']) / pd.to_numeric(df['square_feet'])
+    price = pd.to_numeric(df['price'])
+    square_feet = pd.to_numeric(df['square_feet'])
+    df['price_per_sqft'] = price / square_feet
     return(df)
 
 # Get zipcodes using geopy
@@ -234,7 +237,7 @@ def update_listings_table(data, host_, port_, user_, password_, dbname_):
                      data['url'].iloc[row],
                      data['datetime'].iloc[row],
                      data['last_updated'].iloc[row],
-                     data['price'].iloc[row],
+                     int(data['price'].iloc[row]),
                      data['where_'].iloc[row],
                      str(data['has_image'].iloc[row]),
                      data['latitude'].iloc[row],
@@ -243,7 +246,7 @@ def update_listings_table(data, host_, port_, user_, password_, dbname_):
                      data['square_feet'].iloc[row],
                      data['distance_from_city_center'].iloc[row],
                      data['price_per_sqft'].iloc[row],
-                     data['zip'].iloc[row],               
+                     int(data['zip'].iloc[row]),               
                      data['id'].iloc[row]]                               
                         
             cursor = connection.cursor()
@@ -319,6 +322,7 @@ def main():
                                              geolocator=geolocator, 
                                              lat_field='latitude', 
                                              lon_field='longitude')
+    all_features['zip'] = all_features['zip'].round().astype('Int64')
     print('Complete.')
     
     # Update postgres table
